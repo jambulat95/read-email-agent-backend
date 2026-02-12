@@ -14,14 +14,14 @@ from app.schemas.auth import (
     UserCreate,
     UserResponse,
 )
-from app.services.auth import AuthService
+from app.services.auth import AuthService, create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post(
     "/register",
-    response_model=UserResponse,
+    response_model=Token,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user",
     description="Create a new user account with email and password.",
@@ -29,9 +29,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 async def register(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_async_session),
-) -> User:
+) -> Token:
     """
-    Register a new user.
+    Register a new user and return JWT tokens.
 
     - **email**: Valid email address (must be unique)
     - **password**: At least 8 characters, must contain uppercase, lowercase, and digit
@@ -41,7 +41,10 @@ async def register(
 
     try:
         user = await auth_service.register(user_data)
-        return user
+        return Token(
+            access_token=create_access_token(user.id),
+            refresh_token=create_refresh_token(user.id),
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
