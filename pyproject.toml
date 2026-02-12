@@ -1,0 +1,35 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/tasks/*",
+    "app/alembic/*",
+    "app/services/billing.py",
+    "app/services/gmail_oauth.py",
+    "app/services/encryption.py",
+    "app/services/response_generator.py",
+    "app/services/weekly_report.py",
+    "app/services/usage_tracker.py",
+    "app/services/notifications/email.py",
+    "app/services/notifications/telegram.py",
+    "app/services/notifications/sms.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 60
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+]
