@@ -94,7 +94,7 @@ async def oauth_callback(
     if error:
         logger.error(f"OAuth error from Google: {error}")
         return RedirectResponse(
-            url=f"{frontend_url}/settings/email?error=oauth_denied&message={error}"
+            url=f"{frontend_url}/dashboard/settings/accounts?error=oauth_denied&message={error}"
         )
 
     try:
@@ -111,18 +111,18 @@ async def oauth_callback(
 
         # Default: redirect to settings page
         return RedirectResponse(
-            url=f"{frontend_url}/settings/email?success=true&email={email_account.email}"
+            url=f"{frontend_url}/dashboard/settings/accounts?success=true&email={email_account.email}"
         )
 
     except ValueError as e:
         logger.error(f"OAuth callback error: {e}")
         return RedirectResponse(
-            url=f"{frontend_url}/settings/email?error=oauth_failed&message={str(e)}"
+            url=f"{frontend_url}/dashboard/settings/accounts?error=oauth_failed&message={str(e)}"
         )
     except Exception as e:
         logger.exception(f"Unexpected OAuth callback error: {e}")
         return RedirectResponse(
-            url=f"{frontend_url}/settings/email?error=internal_error"
+            url=f"{frontend_url}/dashboard/settings/accounts?error=internal_error"
         )
 
 
