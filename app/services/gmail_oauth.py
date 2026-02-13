@@ -203,13 +203,16 @@ class GmailOAuthService:
             if encrypted_refresh_token:
                 existing_account.oauth_refresh_token = encrypted_refresh_token
             existing_account.token_expires_at = token_expires_at
+            # Reset last_checked_at so only new emails are analyzed
+            existing_account.last_checked_at = datetime.now(timezone.utc)
             existing_account.is_active = True
             await self.db.commit()
             await self.db.refresh(existing_account)
             logger.info(f"Updated existing EmailAccount for {email}")
             return existing_account, redirect_to
 
-        # Create new account
+        # Create new account with last_checked_at set to now
+        # so that only emails received after connection are analyzed
         email_account = EmailAccount(
             user_id=user_id,
             email=email,
@@ -218,6 +221,7 @@ class GmailOAuthService:
             oauth_refresh_token=encrypted_refresh_token,
             token_expires_at=token_expires_at,
             is_active=True,
+            last_checked_at=datetime.now(timezone.utc),
         )
         self.db.add(email_account)
         await self.db.commit()

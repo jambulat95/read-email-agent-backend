@@ -31,10 +31,18 @@ class CompanySettings(Base, UUIDMixin):
         String(255),
         nullable=True,
     )
+    industry: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     response_tone: Mapped[ResponseTone] = mapped_column(
         String(50),
         default=ResponseTone.PROFESSIONAL,
         nullable=False,
+    )
+    custom_instructions: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
     )
     custom_templates: Mapped[Optional[Dict[str, Any]]] = mapped_column(
         JSON,

@@ -198,8 +198,9 @@ async def get_company_settings(
 
     return CompanySettingsResponse(
         company_name=settings.company_name,
+        industry=settings.industry,
         response_tone=settings.response_tone,
-        custom_templates=settings.custom_templates,
+        custom_instructions=settings.custom_instructions,
     )
 
 
@@ -240,17 +241,20 @@ async def update_company_settings(
     # Update fields
     if data.company_name is not None:
         settings.company_name = data.company_name
+    if data.industry is not None:
+        settings.industry = data.industry
     if data.response_tone is not None:
         settings.response_tone = ResponseTone(data.response_tone)
-    if data.custom_templates is not None:
-        settings.custom_templates = data.custom_templates
+    if data.custom_instructions is not None:
+        settings.custom_instructions = data.custom_instructions
 
     await db.flush()
 
     return CompanySettingsResponse(
         company_name=settings.company_name,
+        industry=settings.industry,
         response_tone=settings.response_tone,
-        custom_templates=settings.custom_templates,
+        custom_instructions=settings.custom_instructions,
     )
 
 

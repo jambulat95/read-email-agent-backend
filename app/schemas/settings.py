@@ -1,7 +1,7 @@
 """
 Pydantic schemas for settings API.
 """
-from typing import Any, Dict, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, EmailStr
 
@@ -44,9 +44,10 @@ class CompanySettingsResponse(BaseModel):
     """Schema for company settings response."""
 
     company_name: Optional[str] = Field(None, description="Company name")
+    industry: Optional[str] = Field(None, description="Company industry")
     response_tone: str = Field(..., description="Default response tone (formal/friendly/professional)")
-    custom_templates: Optional[Dict[str, Any]] = Field(
-        None, description="Custom response templates"
+    custom_instructions: Optional[str] = Field(
+        None, description="Custom AI instructions"
     )
 
     model_config = {"from_attributes": True}
@@ -58,11 +59,14 @@ class CompanySettingsUpdate(BaseModel):
     company_name: Optional[str] = Field(
         None, description="Company name", max_length=255
     )
+    industry: Optional[str] = Field(
+        None, description="Company industry", max_length=255
+    )
     response_tone: Optional[Literal["formal", "friendly", "professional"]] = Field(
         None, description="Default response tone"
     )
-    custom_templates: Optional[Dict[str, Any]] = Field(
-        None, description="Custom response templates"
+    custom_instructions: Optional[str] = Field(
+        None, description="Custom AI instructions"
     )
 
 
