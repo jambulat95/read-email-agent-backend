@@ -36,6 +36,7 @@ settings = get_settings()
 
 # Gmail OAuth scopes
 GMAIL_SCOPES = [
+    "openid",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/userinfo.email",
