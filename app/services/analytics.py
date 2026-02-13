@@ -1,7 +1,7 @@
 """
 Analytics service for generating reports and statistics.
 
-Includes Redis caching and comparison data.
+Includes Redis caching.
 """
 import json
 import logging
@@ -18,13 +18,9 @@ from app.models.enums import PriorityType, SentimentType
 from app.models.review import Review
 from app.schemas.analytics import (
     AnalyticsSummary,
-    ComparisonData,
     ProblemStat,
-    ProblemsBreakdownResponse,
     ResponseTimeStats,
-    TopProblem,
     TrendPoint,
-    TrendsResponse,
 )
 from app.services.redis_client import get_redis_client
 
@@ -32,9 +28,9 @@ logger = logging.getLogger(__name__)
 
 # Cache TTL per period (seconds)
 CACHE_TTL = {
-    "day": 300,      # 5 minutes
-    "week": 900,     # 15 minutes
-    "month": 3600,   # 1 hour
+    "7d": 300,       # 5 minutes
+    "30d": 900,      # 15 minutes
+    "90d": 3600,     # 1 hour
     "all": 3600,     # 1 hour
 }
 
@@ -86,26 +82,14 @@ class AnalyticsService:
     def _get_date_range(self, period: str) -> Optional[datetime]:
         """Get start date for a given period."""
         now = datetime.utcnow()
-        if period == "day":
-            return now - timedelta(days=1)
-        elif period == "week":
-            return now - timedelta(weeks=1)
-        elif period == "month":
+        if period == "7d":
+            return now - timedelta(days=7)
+        elif period == "30d":
             return now - timedelta(days=30)
+        elif period == "90d":
+            return now - timedelta(days=90)
         else:  # 'all'
             return None
-
-    def _get_previous_date_range(self, period: str) -> tuple[Optional[datetime], Optional[datetime]]:
-        """Get start/end date for the previous period (for comparison)."""
-        now = datetime.utcnow()
-        if period == "day":
-            return now - timedelta(days=2), now - timedelta(days=1)
-        elif period == "week":
-            return now - timedelta(weeks=2), now - timedelta(weeks=1)
-        elif period == "month":
-            return now - timedelta(days=60), now - timedelta(days=30)
-        else:
-            return None, None
 
     async def _get_user_email_account_ids(self, user_id: UUID) -> List[UUID]:
         """Get all email account IDs for a user."""
@@ -120,61 +104,6 @@ class AnalyticsService:
             select(func.count(Review.id)).where(and_(*conditions))
         )
         return result.scalar() or 0
-
-    async def _get_sentiment_counts(
-        self, conditions: list
-    ) -> Dict[str, int]:
-        """Get sentiment counts for given conditions."""
-        counts = {}
-        for sentiment in [SentimentType.POSITIVE, SentimentType.NEGATIVE, SentimentType.NEUTRAL]:
-            result = await self.db.execute(
-                select(func.count(Review.id)).where(
-                    and_(*conditions, Review.sentiment == sentiment.value)
-                )
-            )
-            counts[sentiment.value] = result.scalar() or 0
-        return counts
-
-    async def _get_comparison(
-        self, account_ids: List[UUID], period: str, current_total: int, current_sentiments: Dict[str, int]
-    ) -> Optional[ComparisonData]:
-        """Calculate comparison with previous period."""
-        prev_start, prev_end = self._get_previous_date_range(period)
-        if prev_start is None:
-            return None
-
-        prev_conditions = [
-            Review.email_account_id.in_(account_ids),
-            Review.received_at >= prev_start,
-            Review.received_at < prev_end,
-        ]
-
-        prev_total = await self._count_by_conditions(prev_conditions)
-        prev_sentiments = await self._get_sentiment_counts(prev_conditions)
-
-        # Calculate changes
-        total_change = current_total - prev_total
-        total_change_percent = 0.0
-        if prev_total > 0:
-            total_change_percent = round((total_change / prev_total) * 100, 1)
-
-        sentiment_change = {}
-        for sentiment_key in ["positive", "negative", "neutral"]:
-            curr = current_sentiments.get(sentiment_key, 0)
-            prev = prev_sentiments.get(sentiment_key, 0)
-            if prev > 0:
-                change_pct = round(((curr - prev) / prev) * 100, 1)
-            elif curr > 0:
-                change_pct = 100.0
-            else:
-                change_pct = 0.0
-            sentiment_change[sentiment_key] = change_pct
-
-        return ComparisonData(
-            total_change=total_change,
-            total_change_percent=total_change_percent,
-            sentiment_change=sentiment_change,
-        )
 
     async def get_summary(
         self, user_id: UUID, period: str = "all"
@@ -197,17 +126,7 @@ class AnalyticsService:
         """Compute summary analytics (no cache)."""
         account_ids = await self._get_user_email_account_ids(user_id)
         if not account_ids:
-            return AnalyticsSummary(
-                total_reviews=0,
-                positive=0,
-                negative=0,
-                neutral=0,
-                unprocessed=0,
-                critical_count=0,
-                avg_response_time=None,
-                top_problems=[],
-                comparison=None,
-            )
+            return AnalyticsSummary()
 
         start_date = self._get_date_range(period)
 
@@ -216,53 +135,57 @@ class AnalyticsService:
             conditions.append(Review.received_at >= start_date)
 
         total_reviews = await self._count_by_conditions(conditions)
-        sentiment_counts = await self._get_sentiment_counts(conditions)
 
-        # Unprocessed count
-        unprocessed = await self._count_by_conditions(
-            conditions + [Review.is_processed == False]
+        # Sentiment counts
+        positive = await self._count_by_conditions(
+            conditions + [Review.sentiment == SentimentType.POSITIVE.value]
+        )
+        negative = await self._count_by_conditions(
+            conditions + [Review.sentiment == SentimentType.NEGATIVE.value]
+        )
+        neutral = await self._count_by_conditions(
+            conditions + [Review.sentiment == SentimentType.NEUTRAL.value]
+        )
+        mixed = await self._count_by_conditions(
+            conditions + [Review.sentiment == "mixed"]
         )
 
-        # Critical count
+        # Priority counts (backend: critical/important/normal → frontend: critical/high/medium/low)
         critical_count = await self._count_by_conditions(
             conditions + [Review.priority == PriorityType.CRITICAL.value]
+        )
+        high_count = await self._count_by_conditions(
+            conditions + [Review.priority == PriorityType.IMPORTANT.value]
+        )
+        medium_count = await self._count_by_conditions(
+            conditions + [Review.priority == PriorityType.NORMAL.value]
+        )
+        low_count = 0
+
+        # Processed / unprocessed
+        processed = await self._count_by_conditions(
+            conditions + [Review.is_processed == True]
+        )
+        unprocessed = await self._count_by_conditions(
+            conditions + [Review.is_processed == False]
         )
 
         # Average response time
         avg_response_time = await self._compute_avg_response_time(conditions)
 
-        # Top problems
-        problems_result = await self.db.execute(
-            select(Review.problems).where(
-                and_(*conditions, Review.problems.isnot(None))
-            )
-        )
-        all_problems: List[str] = []
-        for row in problems_result.fetchall():
-            if row[0]:
-                all_problems.extend(row[0])
-
-        problem_counter = Counter(all_problems)
-        top_problems = [
-            TopProblem(name=name, count=count)
-            for name, count in problem_counter.most_common(5)
-        ]
-
-        # Comparison data
-        comparison = await self._get_comparison(
-            account_ids, period, total_reviews, sentiment_counts
-        )
-
         return AnalyticsSummary(
             total_reviews=total_reviews,
-            positive=sentiment_counts.get(SentimentType.POSITIVE.value, 0),
-            negative=sentiment_counts.get(SentimentType.NEGATIVE.value, 0),
-            neutral=sentiment_counts.get(SentimentType.NEUTRAL.value, 0),
-            unprocessed=unprocessed,
+            positive_reviews=positive,
+            negative_reviews=negative,
+            neutral_reviews=neutral,
+            mixed_reviews=mixed,
             critical_count=critical_count,
-            avg_response_time=avg_response_time,
-            top_problems=top_problems,
-            comparison=comparison,
+            high_count=high_count,
+            medium_count=medium_count,
+            low_count=low_count,
+            avg_response_time_hours=avg_response_time,
+            processed_count=processed,
+            unprocessed_count=unprocessed,
         )
 
     async def _compute_avg_response_time(self, conditions: list) -> Optional[float]:
@@ -284,27 +207,28 @@ class AnalyticsService:
         return round(float(avg_val), 1) if avg_val is not None else None
 
     async def get_trends(
-        self, user_id: UUID, period: str = "month", group_by: str = "day"
-    ) -> TrendsResponse:
+        self, user_id: UUID, period: str = "30d"
+    ) -> List[TrendPoint]:
         """Get trend data for charts with caching."""
-        cache_key = f"analytics:trends:{user_id}:{period}:{group_by}"
+        cache_key = f"analytics:trends:{user_id}:{period}"
 
         async def compute():
-            return (await self._compute_trends(user_id, period, group_by)).model_dump()
+            points = await self._compute_trends(user_id, period)
+            return [p.model_dump() for p in points]
 
         data = await get_cached_or_compute(cache_key, period, compute)
 
-        if isinstance(data, dict):
-            return TrendsResponse(**data)
+        if isinstance(data, list):
+            return [TrendPoint(**d) if isinstance(d, dict) else d for d in data]
         return data
 
     async def _compute_trends(
-        self, user_id: UUID, period: str, group_by: str
-    ) -> TrendsResponse:
+        self, user_id: UUID, period: str
+    ) -> List[TrendPoint]:
         """Compute trend data (no cache)."""
         account_ids = await self._get_user_email_account_ids(user_id)
         if not account_ids:
-            return TrendsResponse(data=[], period=period, group_by=group_by)
+            return []
 
         start_date = self._get_date_range(period)
         conditions = [Review.email_account_id.in_(account_ids)]
@@ -318,10 +242,7 @@ class AnalyticsService:
 
         date_data: dict = {}
         for received_at, sentiment in reviews:
-            if group_by == "week":
-                date_key = (received_at - timedelta(days=received_at.weekday())).strftime("%Y-%m-%d")
-            else:
-                date_key = received_at.strftime("%Y-%m-%d")
+            date_key = received_at.strftime("%Y-%m-%d")
 
             if date_key not in date_data:
                 date_data[date_key] = {"positive": 0, "negative": 0, "neutral": 0, "total": 0}
@@ -335,7 +256,7 @@ class AnalyticsService:
                 date_data[date_key]["neutral"] += 1
 
         sorted_dates = sorted(date_data.keys())
-        data_points = [
+        return [
             TrendPoint(
                 date=date_key,
                 positive=date_data[date_key]["positive"],
@@ -346,32 +267,29 @@ class AnalyticsService:
             for date_key in sorted_dates
         ]
 
-        return TrendsResponse(data=data_points, period=period, group_by=group_by)
-
     async def get_problems_breakdown(
         self, user_id: UUID, period: str = "all"
-    ) -> ProblemsBreakdownResponse:
-        """Get breakdown of problems with trend data and caching."""
+    ) -> List[ProblemStat]:
+        """Get breakdown of problems with caching."""
         cache_key = f"analytics:problems:{user_id}:{period}"
 
         async def compute():
-            return (await self._compute_problems_breakdown(user_id, period)).model_dump()
+            stats = await self._compute_problems_breakdown(user_id, period)
+            return [s.model_dump() for s in stats]
 
         data = await get_cached_or_compute(cache_key, period, compute)
 
-        if isinstance(data, dict):
-            return ProblemsBreakdownResponse(**data)
+        if isinstance(data, list):
+            return [ProblemStat(**d) if isinstance(d, dict) else d for d in data]
         return data
 
     async def _compute_problems_breakdown(
         self, user_id: UUID, period: str
-    ) -> ProblemsBreakdownResponse:
-        """Compute problems breakdown with trend info (no cache)."""
+    ) -> List[ProblemStat]:
+        """Compute problems breakdown (no cache)."""
         account_ids = await self._get_user_email_account_ids(user_id)
         if not account_ids:
-            return ProblemsBreakdownResponse(
-                problems=[], total_reviews_with_problems=0
-            )
+            return []
 
         start_date = self._get_date_range(period)
         conditions = [
@@ -381,68 +299,30 @@ class AnalyticsService:
         if start_date:
             conditions.append(Review.received_at >= start_date)
 
-        # Current period problems
         result = await self.db.execute(
             select(Review.problems).where(and_(*conditions))
         )
         rows = result.fetchall()
 
         all_problems: List[str] = []
-        reviews_with_problems = 0
         for row in rows:
             if row[0] and len(row[0]) > 0:
-                reviews_with_problems += 1
                 all_problems.extend(row[0])
 
         if not all_problems:
-            return ProblemsBreakdownResponse(
-                problems=[], total_reviews_with_problems=0
-            )
-
-        # Previous period problems for trend calculation
-        prev_start, prev_end = self._get_previous_date_range(period)
-        prev_problem_counter: Counter = Counter()
-        if prev_start is not None:
-            prev_conditions = [
-                Review.email_account_id.in_(account_ids),
-                Review.problems.isnot(None),
-                Review.received_at >= prev_start,
-                Review.received_at < prev_end,
-            ]
-            prev_result = await self.db.execute(
-                select(Review.problems).where(and_(*prev_conditions))
-            )
-            for row in prev_result.fetchall():
-                if row[0]:
-                    prev_problem_counter.update(row[0])
+            return []
 
         problem_counter = Counter(all_problems)
         total_problems = len(all_problems)
 
-        problems = []
-        for name, count in problem_counter.most_common():
-            prev_count = prev_problem_counter.get(name, 0)
-            if prev_count == 0 and count > 0:
-                trend = "up"
-            elif count > prev_count:
-                trend = "up"
-            elif count < prev_count:
-                trend = "down"
-            else:
-                trend = "stable"
-
-            problems.append(
-                ProblemStat(
-                    name=name,
-                    count=count,
-                    percentage=round(count / total_problems * 100, 1),
-                    trend=trend,
-                )
+        return [
+            ProblemStat(
+                problem=name,
+                count=count,
+                percentage=round(count / total_problems * 100, 1),
             )
-
-        return ProblemsBreakdownResponse(
-            problems=problems, total_reviews_with_problems=reviews_with_problems
-        )
+            for name, count in problem_counter.most_common()
+        ]
 
     async def get_response_time_stats(
         self, user_id: UUID, period: str = "all"

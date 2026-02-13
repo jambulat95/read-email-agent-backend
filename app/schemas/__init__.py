@@ -39,10 +39,7 @@ from app.schemas.reviews import (
 from app.schemas.analytics import (
     AnalyticsSummary,
     ProblemStat,
-    ProblemsBreakdownResponse,
-    TopProblem,
     TrendPoint,
-    TrendsResponse,
 )
 from app.schemas.settings import (
     CompanySettingsResponse,
@@ -87,11 +84,8 @@ __all__ = [
     "ReviewListResponse",
     # Analytics
     "AnalyticsSummary",
-    "TopProblem",
     "TrendPoint",
-    "TrendsResponse",
     "ProblemStat",
-    "ProblemsBreakdownResponse",
     # Settings
     "NotificationSettingsResponse",
     "NotificationSettingsUpdate",
