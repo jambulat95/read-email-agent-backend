@@ -111,7 +111,15 @@ class GmailClient:
         """
         if self._service is None:
             credentials = self._get_credentials()
-            self._service = build("gmail", "v1", credentials=credentials)
+            logger.info(f"Building Gmail service for {self.email_account.email}")
+            try:
+                self._service = build(
+                    "gmail", "v1", credentials=credentials, cache_discovery=False
+                )
+                logger.info("Gmail service built successfully")
+            except Exception as e:
+                logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
+                raise GmailClientError(f"Failed to build Gmail service: {e}")
         return self._service
 
     def _handle_http_error(self, error: HttpError) -> None:
@@ -322,19 +330,27 @@ class GmailClient:
             )
 
             # List messages
-            results = (
-                service.users()
-                .messages()
-                .list(
-                    userId="me",
-                    q=query,
-                    maxResults=max_results,
-                    labelIds=["INBOX"],
+            try:
+                results = (
+                    service.users()
+                    .messages()
+                    .list(
+                        userId="me",
+                        q=query,
+                        maxResults=max_results,
+                        labelIds=["INBOX"],
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+            except Exception as e:
+                logger.error(
+                    f"Gmail API messages.list failed for {self.email_account.email}: {e}",
+                    exc_info=True,
+                )
+                raise
 
             messages = results.get("messages", [])
+            logger.info(f"Gmail API returned {len(messages)} message IDs")
             gmail_messages = []
 
             for msg in messages:

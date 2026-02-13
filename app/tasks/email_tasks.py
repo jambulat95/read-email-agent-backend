@@ -197,16 +197,17 @@ def check_emails_for_account(self, email_account_id: str) -> dict:
         )
 
         try:
+            logger.info(f"Calling gmail_client.get_messages for {account.email}")
             messages = gmail_client.get_messages(
                 after=after_date,
                 max_results=50,
             )
             total_fetched = len(messages)
-            logger.info(f"Fetched {total_fetched} messages")
+            logger.info(f"Fetched {total_fetched} messages for {account.email}")
 
         except GmailAuthError as e:
             # OAuth error - deactivate account
-            logger.error(f"OAuth error for {account.email}: {e}")
+            logger.error(f"OAuth error for {account.email}: {e}", exc_info=True)
             account.is_active = False
             db.commit()
 
@@ -226,6 +227,11 @@ def check_emails_for_account(self, email_account_id: str) -> dict:
             # Temporary error - retry
             logger.warning(f"Temporary error for {account.email}: {e}")
             raise  # Will be retried by Celery
+
+        except Exception as e:
+            # Catch any other exception from get_messages
+            logger.error(f"Unexpected error fetching messages for {account.email}: {e}", exc_info=True)
+            raise
 
         # Process each message
         for message in messages:
